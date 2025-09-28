@@ -17,5 +17,15 @@ namespace Domain.Entities
         public DateTime? UpdatedAt { get; set; }
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public ICollection<Course> Courses { get; set; } = new List<Course>();
+
+        // ===========================
+        // Image Options
+        // ===========================
+        // Path if saving in folder
+        public string? PhotoPath { get; set; }
+
+        // Data if saving in DB
+        public byte[]? PhotoData { get; set; }
+        public string? PhotoContentType { get; set; }
     }
 }

@@ -50,17 +50,12 @@ namespace ApiProject.Controllers
             return stream;
         }
 
-        // ===== Get All Teachers =====
+        // ===== Get All Teachers with optional name filter and pagination =====
         [Authorize(Roles = "Admin")]
         [HttpGet]
-        public async Task<IActionResult> GetAll([FromQuery] string? name)
+        public async Task<IActionResult> GetAll([FromQuery] string? name, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
         {
-            var teachers = await _teacherService.GetAllAsync();
-
-            if (!string.IsNullOrWhiteSpace(name))
-                teachers = teachers
-                    .Where(t => t.Name.Contains(name, System.StringComparison.OrdinalIgnoreCase))
-                    .ToList();
+            var teachers = await _teacherService.GetAllAsync(name, page, pageSize);
 
             if (!teachers.Any())
                 return Ok(new { success = true, message = "No teachers found.", data = new List<TeacherDto>() });
@@ -79,7 +74,14 @@ namespace ApiProject.Controllers
                 }).ToList()
             }).ToList();
 
-            return Ok(new { success = true, count = result.Count, data = result });
+            return Ok(new
+            {
+                success = true,
+                count = result.Count,
+                page,
+                pageSize,
+                data = result
+            });
         }
 
         // ===== Get Teacher By Id =====
@@ -90,7 +92,7 @@ namespace ApiProject.Controllers
             if (id <= 0)
                 return BadRequest(new { success = false, message = "Invalid teacher id. Id must be greater than 0." });
 
-            var teacher = await _teacherService.GetByIdAsync(id, true);
+            var teacher = await _teacherService.GetByIdAsync(id);
             if (teacher == null)
                 return NotFound(new { success = false, message = $"Teacher with ID {id} not found." });
 
@@ -153,7 +155,7 @@ namespace ApiProject.Controllers
             if (id <= 0)
                 return BadRequest(new { success = false, message = "Invalid teacher id. Id must be greater than 0." });
 
-            var teacher = await _teacherService.GetByIdAsync(id, true);
+            var teacher = await _teacherService.GetByIdAsync(id);
             if (teacher == null)
                 return NotFound(new { success = false, message = $"Teacher with ID {id} not found." });
 
@@ -203,11 +205,7 @@ namespace ApiProject.Controllers
         [HttpGet("export")]
         public async Task<IActionResult> Export([FromQuery] string? name, [FromQuery] bool withCourses = false)
         {
-            var teachers = await _teacherService.GetAllAsync();
-
-            if (!string.IsNullOrWhiteSpace(name))
-                teachers = teachers.Where(t => t.Name.Contains(name, System.StringComparison.OrdinalIgnoreCase)).ToList();
-
+            var teachers = await _teacherService.GetAllAsync(name, 1, 1000); // Export up to 1000 teachers
             if (!teachers.Any())
                 return NotFound(new { success = false, message = "No teachers found to export." });
 

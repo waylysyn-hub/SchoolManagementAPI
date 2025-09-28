@@ -1,7 +1,6 @@
 ﻿using ClosedXML.Excel;
 using Data.Services;
 using Domain.DTOs;
-using Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -26,10 +25,7 @@ namespace ApiProject.Controllers
             _logger = logger;
         }
 
-        // =========================
-        // Excel Generator (helper)
-        // =========================
-        private static MemoryStream GenerateExcel(List<Course> courses)
+        private static MemoryStream GenerateExcel(List<CourseWithStudentsDto> courses)
         {
             var workbook = new XLWorkbook();
             var ws = workbook.Worksheets.Add("Courses");
@@ -47,8 +43,7 @@ namespace ApiProject.Controllers
                 ws.Cell(i + 2, 2).Value = c.Title;
                 ws.Cell(i + 2, 3).Value = c.Description ?? "";
                 ws.Cell(i + 2, 4).Value = c.TeacherId;
-                var studentNames = c.Students?.Select(s => s.Name) ?? Enumerable.Empty<string>();
-                ws.Cell(i + 2, 5).Value = string.Join(", ", studentNames);
+                ws.Cell(i + 2, 5).Value = string.Join(", ", c.Students.Select(s => s.Name));
             }
 
             var stream = new MemoryStream();
@@ -57,145 +52,76 @@ namespace ApiProject.Controllers
             return stream;
         }
 
-        // =========================
-        // GET /courses 🔒 قراءة
-        // =========================
         [Authorize(Policy = "course.read")]
         [HttpGet]
-        public async Task<IActionResult> GetAll([FromQuery] string? title, [FromQuery] int? teacherId)
+        public async Task<IActionResult> GetAll(
+            [FromQuery] string? title,
+            [FromQuery] int? teacherId,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 50)
         {
             try
             {
-                var courses = (await _service.GetAllAsync()).ToList();
-
-                if (!string.IsNullOrWhiteSpace(title))
-                    courses = courses.Where(c => c.Title != null && c.Title.Contains(title, StringComparison.OrdinalIgnoreCase)).ToList();
-
-                if (teacherId.HasValue)
-                    courses = courses.Where(c => c.TeacherId == teacherId.Value).ToList();
+                var courses = await _service.GetAllAsync(title, teacherId, page, pageSize);
 
                 if (!courses.Any())
-                    return NotFound(new { success = false, message = "No courses found with the given filters" });
+                    return NotFound(new { success = false, message = "No courses found" });
 
-                var data = courses.Select(c => new CourseDto
+                return Ok(new
                 {
-                    Id = c.Id,
-                    Title = c.Title,
-                    Description = c.Description,
-                    TeacherId = c.TeacherId
-                }).ToList();
-
-                return Ok(new { success = true, data });
+                    success = true,
+                    count = courses.Count,
+                    page,
+                    pageSize,
+                    data = courses
+                });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error in GetAll courses");
-                return StatusCode(500, new { success = false, message = "Unexpected error while fetching courses", details = ex.Message });
+                _logger.LogError(ex, "Error fetching courses");
+                return StatusCode(500, new { success = false, message = "Unexpected error", details = ex.Message });
             }
         }
 
-        // =========================
-        // GET /courses/{id} 🔒 قراءة
-        // =========================
         [Authorize(Policy = "course.read")]
         [HttpGet("{id}")]
         public async Task<IActionResult> GetById(int id)
         {
-            if (id <= 0)
-                return BadRequest(new { success = false, message = "Invalid course ID" });
-
             try
             {
                 var course = await _service.GetByIdAsync(id);
                 if (course == null)
                     return NotFound(new { success = false, message = $"Course {id} not found" });
 
-                var dto = new CourseDetailDto
-                {
-                    Id = course.Id,
-                    Title = course.Title,
-                    Description = course.Description,
-                    TeacherId = course.TeacherId,
-                    Students = course.Students?.Select(s => new StudentDto
-                    {
-                        Id = s.Id,
-                        Name = s.Name
-                    }).ToList() ?? new List<StudentDto>()
-                };
-
-                return Ok(new { success = true, data = dto });
+                return Ok(new { success = true, data = course });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error in GetById for course {CourseId}", id);
-                return StatusCode(500, new { success = false, message = $"Unexpected error while fetching course {id}", details = ex.Message });
+                _logger.LogError(ex, "Error fetching course {CourseId}", id);
+                return StatusCode(500, new { success = false, message = "Unexpected error", details = ex.Message });
             }
         }
 
-
-        // =========================
-        // POST /courses 🔒 إنشاء
-        // =========================
         [Authorize(Policy = "course.create")]
         [HttpPost]
         public async Task<IActionResult> Create([FromBody] CourseCreateDto dto)
         {
-            if (dto == null)
-                return BadRequest(new { success = false, message = "Request body is missing" });
-
-            if (string.IsNullOrWhiteSpace(dto.Title))
-                return BadRequest(new { success = false, message = "Course title is required" });
-
-            if (dto.TeacherId <= 0)
-                return BadRequest(new { success = false, message = "Invalid teacher ID" });
-
             try
             {
-                var created = await _service.AddAsync(dto);
-                return CreatedAtAction(nameof(GetById), new { id = created.Id }, new
-                {
-                    success = true,
-                    message = "Course created successfully",
-                    id = created.Id
-                });
-            }
-            catch (InvalidOperationException invEx)
-            {
-                // expected validation-like errors from service (teacher missing, duplicate, missing students...)
-                _logger.LogWarning(invEx, "Validation error while creating course");
-                return BadRequest(new { success = false, message = invEx.Message });
-            }
-            catch (ArgumentNullException argEx)
-            {
-                _logger.LogWarning(argEx, "Invalid input while creating course");
-                return BadRequest(new { success = false, message = argEx.Message });
+                var course = await _service.AddAsync(dto);
+                return CreatedAtAction(nameof(GetById), new { id = course.Id }, new { success = true, message = "Course created", id = course.Id });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Unexpected error while creating course");
-                return StatusCode(500, new { success = false, message = "Unexpected error while creating course", details = ex.Message });
+                _logger.LogError(ex, "Error creating course");
+                return BadRequest(new { success = false, message = ex.Message });
             }
         }
 
-        // =========================
-        // PUT /courses/{id} 🔒 تعديل
-        // =========================
         [Authorize(Policy = "course.update")]
         [HttpPut("{id}")]
         public async Task<IActionResult> Update(int id, [FromBody] CourseUpdateDto dto)
         {
-            if (id <= 0)
-                return BadRequest(new { success = false, message = "Invalid course ID" });
-
-            if (dto == null)
-                return BadRequest(new { success = false, message = "Request body is missing" });
-
-            if (string.IsNullOrWhiteSpace(dto.Title))
-                return BadRequest(new { success = false, message = "Course title is required" });
-
-            if (dto.TeacherId <= 0)
-                return BadRequest(new { success = false, message = "Invalid teacher ID" });
-
             try
             {
                 var updated = await _service.UpdateAsync(id, dto);
@@ -204,33 +130,24 @@ namespace ApiProject.Controllers
 
                 return Ok(new { success = true, message = $"Course {id} updated successfully" });
             }
-            catch (InvalidOperationException invEx)
+            catch (InvalidOperationException ex)
             {
-                _logger.LogWarning(invEx, "Validation error while updating course {CourseId}", id);
-                return BadRequest(new { success = false, message = invEx.Message });
-            }
-            catch (ArgumentException argEx)
-            {
-                _logger.LogWarning(argEx, "Invalid input while updating course {CourseId}", id);
-                return BadRequest(new { success = false, message = argEx.Message });
+                // هنا بنعالج الأخطاء اللي منطقية متعلقة بالداتا فقط
+                return BadRequest(new { success = false, message = ex.Message });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Unexpected error while updating course {CourseId}", id);
-                return StatusCode(500, new { success = false, message = $"Unexpected error while updating course {id}", details = ex.Message });
+                // هنا نتركه للاخطاء غير المتوقعة
+                _logger.LogError(ex, "Unexpected error updating course {CourseId}", id);
+                return StatusCode(500, new { success = false, message = "Unexpected error occurred" });
             }
         }
 
-        // =========================
-        // DELETE /courses/{id} 🔒 حذف
-        // =========================
+
         [Authorize(Policy = "course.delete")]
         [HttpDelete("{id}")]
         public async Task<IActionResult> Delete(int id)
         {
-            if (id <= 0)
-                return BadRequest(new { success = false, message = "Invalid course ID" });
-
             try
             {
                 var deleted = await _service.DeleteAsync(id);
@@ -239,59 +156,36 @@ namespace ApiProject.Controllers
 
                 return Ok(new { success = true, message = $"Course {id} deleted successfully" });
             }
-            catch (Microsoft.EntityFrameworkCore.DbUpdateException dbEx)
-            {
-                _logger.LogError(dbEx, "DB error while deleting course {CourseId}", id);
-                // foreign key constraint or cascade issue
-                return Conflict(new { success = false, message = $"Unable to delete course {id} due to related data or database constraint", details = dbEx.Message });
-            }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Unexpected error while deleting course {CourseId}", id);
-                return StatusCode(500, new { success = false, message = $"Unexpected error while deleting course {id}", details = ex.Message });
+                _logger.LogError(ex, "Error deleting course {CourseId}", id);
+                return StatusCode(500, new { success = false, message = ex.Message });
             }
         }
 
-        // =========================
-        // GET /courses/export 🔒 قراءة
-        // =========================
         [Authorize(Policy = "course.read")]
         [HttpGet("export")]
-        public async Task<IActionResult> Export([FromQuery] string? title, [FromQuery] int? teacherId)
+        public async Task<IActionResult> Export(
+            [FromQuery] string? title,
+            [FromQuery] int? teacherId,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 1000)
         {
             try
             {
-                var courses = (await _service.GetAllAsync()).ToList();
-
-                if (!string.IsNullOrWhiteSpace(title))
-                    courses = courses.Where(c => c.Title != null && c.Title.Contains(title, StringComparison.OrdinalIgnoreCase)).ToList();
-
-                if (teacherId.HasValue)
-                    courses = courses.Where(c => c.TeacherId == teacherId.Value).ToList();
-
+                var courses = await _service.GetAllAsync(title, teacherId, page, pageSize);
                 if (!courses.Any())
-                    return NotFound(new { success = false, message = "No courses found to export" });
+                    return NotFound(new { success = false, message = "No courses to export" });
 
-                MemoryStream stream;
-                try
-                {
-                    // Create a copy so GenerateExcel doesn't mutate original list
-                    stream = GenerateExcel(courses.Select(c => c).ToList());
-                }
-                catch (Exception genEx)
-                {
-                    _logger.LogError(genEx, "Error while generating Excel");
-                    return StatusCode(500, new { success = false, message = "Failed to generate Excel file", details = genEx.Message });
-                }
-
+                var stream = GenerateExcel(courses);
                 return File(stream.ToArray(),
                             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             "Courses.xlsx");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Unexpected error while exporting courses");
-                return StatusCode(500, new { success = false, message = "Unexpected error while exporting courses", details = ex.Message });
+                _logger.LogError(ex, "Error exporting courses");
+                return StatusCode(500, new { success = false, message = ex.Message });
             }
         }
     }
