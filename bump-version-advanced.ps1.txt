@@ -1,0 +1,58 @@
+# ------------------------------------
+# Advanced version bump script
+# ------------------------------------
+
+# ملف النسخة
+$versionFile = "VERSION.txt"
+
+# قراءة النسخة الحالية
+if (-Not (Test-Path $versionFile)) {
+    "0.0.0" | Set-Content $versionFile
+}
+
+$version = Get-Content $versionFile
+$parts = $version.Split('.')
+
+# طلب نوع التحديث من المستخدم
+Write-Host "Current version: $version"
+Write-Host "Choose version increment type:"
+Write-Host "1) Major"
+Write-Host "2) Minor"
+Write-Host "3) Patch"
+$choice = Read-Host "Enter 1, 2, or 3"
+
+switch ($choice) {
+    "1" {
+        $parts[0] = ([int]$parts[0] + 1).ToString()
+        $parts[1] = "0"
+        $parts[2] = "0"
+    }
+    "2" {
+        $parts[1] = ([int]$parts[1] + 1).ToString()
+        $parts[2] = "0"
+    }
+    default {
+        $parts[2] = ([int]$parts[2] + 1).ToString()
+    }
+}
+
+# إنشاء النسخة الجديدة
+$newVersion = "$($parts[0]).$($parts[1]).$($parts[2])"
+
+# تحديث الملف
+$newVersion | Set-Content $versionFile
+
+# إضافة الملف والتزام التغييرات
+git add $versionFile
+git commit -m "Bump version to $newVersion"
+
+# حذف أي تاغ موجود بنفس الاسم على الريموت
+$tagName = "v$newVersion"
+git tag -d $tagName 2>$null
+git push --delete origin $tagName 2>$null
+
+# إنشاء التاغ الجديد ورفعه
+git tag -a $tagName -m "Release $newVersion"
+git push origin $tagName
+
+Write-Host "✅ Version bumped to $newVersion and pushed with tag $tagName"
